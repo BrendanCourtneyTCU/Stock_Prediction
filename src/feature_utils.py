@@ -88,3 +88,4 @@ def get_bitcoin_historical_prices(days = 60):
     df = df[['Date', 'Close Price (USD)']].set_index('Date')
     return df
 
+
