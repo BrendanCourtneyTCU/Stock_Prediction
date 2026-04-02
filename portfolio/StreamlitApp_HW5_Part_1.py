@@ -112,7 +112,7 @@ def call_model_api(input_df):
 def display_explanation(input_df, session, aws_bucket):
     explainer_name = MODEL_INFO["explainer"]
     explainer = load_shap_explainer(session, aws_bucket, posixpath.join('explainer', explainer_name),os.path.join(tempfile.gettempdir(), explainer_name))
-    dataset = pd.read_csv(r'.\SP500Data.csv',index_col=0)
+    dataset = pd.read_csv(r'./SP500Data.csv',index_col=0)
     # For HW5, Predict a Different Company than IBM
     random = 'NVDA'
     random_price = json.loads(request_body)[random]
