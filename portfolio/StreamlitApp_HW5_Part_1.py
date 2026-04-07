@@ -120,7 +120,7 @@ def display_explanation(input_df, session, aws_bucket):
 
     return_period = 5
 
-    X = np.log(dataset.drop(['MSFT'],axis=1)).diff(return_period)
+    X = np.log(dataset.drop(['NVDA'],axis=1)).diff(return_period)
     X = np.exp(X).cumsum()
     X.columns = [name + "_CR_Cum" for name in X.columns]
 
