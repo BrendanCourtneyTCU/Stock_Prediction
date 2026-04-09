@@ -130,6 +130,7 @@ def display_explanation(input_df, session, aws_bucket):
 
     preprocessing_pipeline = Pipeline(steps=best_pipeline.steps[:-1])
     input_df_transformed = preprocessing_pipeline.transform(input_df)
+    print(input_df_transformed)
     feature_names = best_pipeline[0:3].get_feature_names_out()
     input_df_transformed = pd.DataFrame(input_df_transformed, columns=feature_names)
     
