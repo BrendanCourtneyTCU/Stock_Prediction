@@ -106,6 +106,7 @@ def call_model_api(input_df):
     )
 
     try:
+        # for option one and change the comments here
         # For regression
         # raw_pred = predictor.predict(input_df)
         # pred_val = pd.DataFrame(raw_pred).values[-1][0]
