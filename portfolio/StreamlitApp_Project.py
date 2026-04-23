@@ -28,25 +28,25 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 # --- 1. CRITICAL INJECTION FOR UNPICKLING ---
+# This links the saved pipeline steps to the actual code in your src folder
 from src.Custom_Classes import FeatureSelector, AutoPowerTransformer
 from src.feature_utils import drop_columns, clip_outliers
 import __main__
 __main__.drop_columns = drop_columns
 __main__.clip_outliers = clip_outliers
 
-# --- 2. DATA LOAD ---
+# --- 2. DATA TEMPLATE LOAD ---
 file_path = os.path.join(project_root, 'portfolio/X_train.csv')
 dataset = pd.read_csv(file_path)
 dataset = dataset.loc[:, ~dataset.columns.str.contains('^Unnamed')]
 
-# Access the secrets
+# AWS Secrets Configuration
 aws_id = st.secrets["aws_credentials"]["AWS_ACCESS_KEY_ID"]
 aws_secret = st.secrets["aws_credentials"]["AWS_SECRET_ACCESS_KEY"]
 aws_token = st.secrets["aws_credentials"]["AWS_SESSION_TOKEN"]
 aws_bucket = st.secrets["aws_credentials"]["AWS_BUCKET"]
 aws_endpoint = st.secrets["aws_credentials"]["AWS_ENDPOINT"]
 
-# AWS Session Management
 @st.cache_resource 
 def get_session(aws_id, aws_secret, aws_token):
     return boto3.Session(
@@ -59,7 +59,6 @@ def get_session(aws_id, aws_secret, aws_token):
 session = get_session(aws_id, aws_secret, aws_token)
 sm_session = sagemaker.Session(boto_session=session)
 
-# Data & Model Configuration
 MODEL_INFO = {
     "endpoint"  : aws_endpoint,
     "explainer" : "fraud_shap_explainer.pkl",
@@ -68,20 +67,15 @@ MODEL_INFO = {
     "inputs"    : [{"name": k, "type": "number", "min": 0.0, "max": 10000.0, "default": 50.0, "step": 1.0} for k in ['TransactionAmt','addr1','addr2']]
 }
 
+# Helper functions for S3 interactions
 def load_pipeline(_session, bucket, key):
     s3_client = _session.client('s3')
     filename = MODEL_INFO["pipeline"]
-
-    s3_client.download_file(
-        Filename=filename, 
-        Bucket=bucket, 
-        Key=f"{key}/{os.path.basename(filename)}"
-    )
+    s3_client.download_file(Filename=filename, Bucket=bucket, Key=f"{key}/{os.path.basename(filename)}")
     
     with tarfile.open(filename, "r:gz") as tar:
         tar.extractall(path=".")
         joblib_file = [f for f in tar.getnames() if f.endswith('.pkl')][0]
-    
     return joblib.load(f"{joblib_file}")
 
 def load_shap_explainer(_session, bucket, key, local_path):
@@ -91,7 +85,7 @@ def load_shap_explainer(_session, bucket, key, local_path):
     with open(local_path, "rb") as f:
         return load(f)
 
-# Prediction Logic
+# --- 3. PREDICTION LOGIC (API CALL) ---
 def call_model_api(input_dict):
     predictor = Predictor(
         endpoint_name=MODEL_INFO["endpoint"],
@@ -102,41 +96,37 @@ def call_model_api(input_dict):
 
     try:
         raw_pred = predictor.predict(input_dict)
-        if isinstance(raw_pred, list):
-            pred_val = raw_pred[-1]
-        else:
-            pred_val = raw_pred
-            
+        pred_val = raw_pred[-1] if isinstance(raw_pred, list) else raw_pred
         mapping = {0: "Legitimate", 1: "Fraud"}
         return mapping.get(pred_val, "Unknown Prediction"), 200
     except Exception as e:
         return f"Error: {str(e)}", 500
 
-# --- 3. UPDATED EXPLAINABILITY (FIXED FEATURE NAMES) ---
+# --- 4. EXPLAINABILITY LOGIC (SHAP) ---
 def display_explanation(input_dict, session, aws_bucket):
     explainer_name = MODEL_INFO["explainer"]
     explainer = load_shap_explainer(session, aws_bucket, posixpath.join('explainer', explainer_name), os.path.join(tempfile.gettempdir(), explainer_name))
     
     best_pipeline = load_pipeline(session, aws_bucket, 'fraud-detection-deployment-1')
     
-    # Slice the pipeline to get all transformers except the final classifier
-    preprocessing_pipeline = Pipeline(steps=best_pipeline.steps[:-1])
+    # --- CRITICAL FIX: Slicing to avoid the SMOTE/Sampler transform error ---
+    # We drop the last 2 steps (SMOTE and XGBClassifier) to keep only transformers
+    preprocessing_pipeline = best_pipeline[:-2]
     
     input_df = pd.DataFrame([input_dict]) 
     input_df_transformed = preprocessing_pipeline.transform(input_df)
     
-    # MANUAL FEATURE NAMING: This fixes the 'get_feature_names_out' error
-    # since PCA and RFE scramble the original column names.
+    # Generic Naming for PCA/RFE Components
     feature_names = [f"Component_{i+1}" for i in range(input_df_transformed.shape[1])]
     input_df_transformed = pd.DataFrame(input_df_transformed, columns=feature_names)
     
-    # Generate SHAP values
+    # Calculate SHAP values for local explainability
     shap_values = explainer(input_df_transformed)
     
     st.subheader("🔍 Decision Transparency (SHAP)")
     fig, ax = plt.subplots(figsize=(10, 4))
     
-    # Plot waterfall for Class 1 (Fraud)
+    # Class 1 is usually the 'bad' outcome (Fraud)
     if len(shap_values.shape) > 2:
         shap.plots.waterfall(shap_values[0, :, 1])
     else:
@@ -144,7 +134,7 @@ def display_explanation(input_dict, session, aws_bucket):
         
     st.pyplot(fig)
     
-    # Business Insight Extraction
+    # Extract the top contributing feature for business context
     try:
         vals = shap_values.values[0] if len(shap_values.shape) <= 2 else shap_values.values[0, :, 1]
         top_feature_idx = np.abs(vals).argmax()
@@ -153,12 +143,12 @@ def display_explanation(input_dict, session, aws_bucket):
     except:
         pass
 
-# Streamlit UI
-st.set_page_config(page_title="ML Deployment", layout="wide")
-st.title("👨‍💻 ML Deployment")
+# --- 5. STREAMLIT UI ---
+st.set_page_config(page_title="Fraud Detection Deployment", layout="wide")
+st.title("👨‍💻 ML Deployment: Fraud Risk Analysis")
 
 with st.form("pred_form"):
-    st.subheader(f"Inputs")
+    st.subheader("Transaction Details")
     cols = st.columns(2)
     user_inputs = {}
     
@@ -171,7 +161,7 @@ with st.form("pred_form"):
     
     submitted = st.form_submit_button("Run Prediction")
 
-# Prepare full feature set from blueprint
+# Merge user inputs with the baseline feature blueprint
 original = dataset.iloc[0:1].to_dict(orient='records')[0] 
 original.update(user_inputs)
 
@@ -179,6 +169,7 @@ if submitted:
     res, status = call_model_api(original)
     if status == 200:
         st.metric("Prediction Result", res)
+        # Trigger the SHAP visualization after a successful prediction
         display_explanation(original, session, aws_bucket)
     else:
         st.error(res)
