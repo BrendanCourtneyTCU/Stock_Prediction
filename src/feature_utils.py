@@ -8,10 +8,6 @@ import requests
 import os
 import sys
 
-import os
-import sys
-
-
 # ... continue with your script ...
 
 def extract_features():
@@ -92,23 +88,3 @@ def get_year(col):
     return pd.to_numeric(col.iloc[:, 0].str[-4:], errors='coerce').to_frame()
 
 def get_emp_num(col):
-    s = col.iloc[:, 0].str.replace('10+ years', '10', regex=False).str.replace('< 1 year', '0', regex=False)
-    return pd.to_numeric(s.str.split().str[0], errors='coerce').to_frame()
-
-def get_term_num(col):
-    return pd.to_numeric(col.iloc[:, 0].str.replace(' months', '', regex=False), errors='coerce').to_frame()
-
-
-
-def clip_outliers(X):
-    X_copy = X.copy()
-    
-    # Ensure it is a dataframe
-    if not isinstance(X_copy, pd.DataFrame):
-        X_copy = pd.DataFrame(X_copy)
-        
-    num_cols = X_copy.select_dtypes(include=np.number).columns
-    for col in num_cols:
-        lower, upper = X_copy[col].quantile(0.01), X_copy[col].quantile(0.99)
-        X_copy[col] = X_copy[col].clip(lower=lower, upper=upper)
-    return X_copy
