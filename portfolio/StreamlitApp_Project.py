@@ -118,7 +118,9 @@ def display_explanation(input_dict, session, aws_bucket):
     explainer_name = MODEL_INFO["explainer"]
     explainer = load_shap_explainer(session, aws_bucket, posixpath.join('explainer', explainer_name), os.path.join(tempfile.gettempdir(), explainer_name))
     
-    best_pipeline = load_pipeline(session, aws_bucket, 'sklearn-pipeline-deployment')
+    # --- THIS IS THE LINE THAT NEEDED FIXING ---
+    best_pipeline = load_pipeline(session, aws_bucket, 'fraud-detection-deployment-1')
+    
     preprocessing_pipeline = Pipeline(steps=best_pipeline.steps[:-3])
     
     # FIXED: Wrap flat dictionary in a list so pandas doesn't throw a scalar error
