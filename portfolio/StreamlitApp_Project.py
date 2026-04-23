@@ -29,7 +29,11 @@ if project_root not in sys.path:
 
 # FIXED: Ensure these exactly match the classes used in your finalized_fraud_model.pkl!
 from src.Custom_Classes import FeatureSelector, AutoPowerTransformer
-
+# Fix for the AttributeError by injecting functions into the main namespace
+from src.feature_utils import drop_columns, clip_outliers
+import __main__
+__main__.drop_columns = drop_columns
+__main__.clip_outliers = clip_outliers
 file_path = os.path.join(project_root, 'portfolio/X_train.csv')
 dataset = pd.read_csv(file_path)
 dataset = dataset.loc[:, ~dataset.columns.str.contains('^Unnamed')]
