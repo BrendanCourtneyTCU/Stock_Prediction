@@ -60,11 +60,12 @@ sm_session = sagemaker.Session(boto_session=session)
 df_features = extract_features()
 
 MODEL_INFO = {
-        "endpoint": aws_endpoint,
-        "explainer": 'explainer_sentiment.shap',
-        "pipeline": 'finalized_sentiment_model.tar.gz',
-        "keys": ['ADBE','AMZN', 'WMT','PredictedSentiment'],
-        "inputs": [{"name": k, "type": "number", "min": -1.0, "max": 1.0, "default": 0.0, "step": 0.01} for k in ['ADBE','AMZN', 'WMT','PredictedSentiment']]
+    "endpoint": aws_endpoint,
+    "explainer": 'explainer_sentiment.shap',
+    "pipeline": 'finalized_sentiment_model.tar.gz',
+    # UPDATE: Match the winning [HW4] Pairs features exactly
+    "keys": ['AMZN', 'GOOG', 'ADBE', 'MSFT', 'TSLA'],
+    "inputs": [{"name": k, "type": "number", "min": -1.0, "max": 1.0, "default": 0.0, "step": 0.01} for k in ['AMZN', 'GOOG', 'ADBE', 'MSFT', 'TSLA']]
 }
 
 def load_pipeline(_session, bucket, key):
@@ -108,14 +109,14 @@ def call_model_api(input_df):
     try:
         # for option one and change the comments here
         # For regression
-        # raw_pred = predictor.predict(input_df)
-        # pred_val = pd.DataFrame(raw_pred).values[-1][0]
-        # return round(float(pred_val), 4), 200
-        # For classification
         raw_pred = predictor.predict(input_df)
         pred_val = pd.DataFrame(raw_pred).values[-1][0]
-        mapping = {0: "SELL", 1: "HOLD", 2: "BUY"}
-        return mapping.get(pred_val), 200
+        return round(float(pred_val), 4), 200
+        # For classification
+        # raw_pred = predictor.predict(input_df)
+        # pred_val = pd.DataFrame(raw_pred).values[-1][0]
+        # mapping = {0: "SELL", 1: "HOLD", 2: "BUY"}
+        # return mapping.get(pred_val), 200
     except Exception as e:
         return f"Error: {str(e)}", 500
 
@@ -125,20 +126,20 @@ def display_explanation(input_df, session, aws_bucket):
     explainer = load_shap_explainer(session, aws_bucket, posixpath.join('explainer', explainer_name),os.path.join(tempfile.gettempdir(), explainer_name))
     
     best_pipeline = load_pipeline(session, aws_bucket, 'sklearn-pipeline-deployment')
-    preprocessing_pipeline = Pipeline(steps=best_pipeline.steps[:-2])
+    preprocessing_pipeline = Pipeline(steps=best_pipeline.steps[:-1])
     input_df_transformed = preprocessing_pipeline.transform(input_df)
-    feature_names = best_pipeline[:-2].get_feature_names_out()
+    feature_names = best_pipeline[:-1].get_feature_names_out()
     input_df_transformed = pd.DataFrame(input_df_transformed, columns=feature_names)
     shap_values = explainer(input_df_transformed)
     
     st.subheader("🔍 Decision Transparency (SHAP)")
     fig, ax = plt.subplots(figsize=(10, 4))
-    #shap.plots.waterfall(shap_values[0], max_display=10)
-    shap.plots.waterfall(shap_values[0, :, 0])
+    shap.plots.waterfall(shap_values[0], max_display=10)
+    #shap.plots.waterfall(shap_values[0, :, 0])
     st.pyplot(fig)
     # top feature UN COMMENT FOR OPTION 1 AND COMMENT OTHER STUFF
-    # top_feature = pd.Series(shap_values[0].values, index=shap_values[0].feature_names).abs().idxmax()
-    top_feature = pd.Series(shap_values[0, :, 0].values, index=shap_values[0, :, 0].feature_names).abs().idxmax()
+    top_feature = pd.Series(shap_values[0].values, index=shap_values[0].feature_names).abs().idxmax()
+    #top_feature = pd.Series(shap_values[0, :, 0].values, index=shap_values[0, :, 0].feature_names).abs().idxmax()
     st.info(f"**Business Insight:** The most influential factor in this decision was **{top_feature}**.")
 
 
