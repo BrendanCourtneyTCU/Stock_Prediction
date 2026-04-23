@@ -27,8 +27,8 @@ project_root = os.path.abspath(os.path.join(current_dir, '..'))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-# NOTE: Ensure these exactly match the classes used in your finalized_fraud_model.pkl!
-from src.Custom_Classes import DropHighMissingCols, TransactionFeatureEngineer, DropHighCorrelation
+# FIXED: Ensure these exactly match the classes used in your finalized_fraud_model.pkl!
+from src.Custom_Classes import FeatureSelector, AutoPowerTransformer
 
 file_path = os.path.join(project_root, 'Portfolio/X_train.csv')
 dataset = pd.read_csv(file_path)
