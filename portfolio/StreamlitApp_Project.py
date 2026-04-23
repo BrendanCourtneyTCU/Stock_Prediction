@@ -13,7 +13,7 @@ import boto3
 import sagemaker
 from sagemaker.predictor import Predictor
 from sagemaker.serializers import JSONSerializer 
-from sagemaker.deserializers import JSONDeserializer # FIXED: Match inference script
+from sagemaker.deserializers import JSONDeserializer 
 from sklearn.pipeline import Pipeline
 import shap
 from joblib import dump, load
@@ -27,13 +27,14 @@ project_root = os.path.abspath(os.path.join(current_dir, '..'))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-# FIXED: Ensure these exactly match the classes used in your finalized_fraud_model.pkl!
+# --- 1. CRITICAL INJECTION FOR UNPICKLING ---
 from src.Custom_Classes import FeatureSelector, AutoPowerTransformer
-# Fix for the AttributeError by injecting functions into the main namespace
 from src.feature_utils import drop_columns, clip_outliers
 import __main__
 __main__.drop_columns = drop_columns
 __main__.clip_outliers = clip_outliers
+
+# --- 2. DATA LOAD ---
 file_path = os.path.join(project_root, 'portfolio/X_train.csv')
 dataset = pd.read_csv(file_path)
 dataset = dataset.loc[:, ~dataset.columns.str.contains('^Unnamed')]
@@ -61,10 +62,10 @@ sm_session = sagemaker.Session(boto_session=session)
 # Data & Model Configuration
 MODEL_INFO = {
     "endpoint"  : aws_endpoint,
-    "explainer" : "fraud_shap_explainer.pkl", # FIXED: Based on your Jupyter screenshot
-    "pipeline"  : "finalized_fraud_model.tar.gz", # FIXED: Based on your Jupyter screenshot
+    "explainer" : "fraud_shap_explainer.pkl",
+    "pipeline"  : "finalized_fraud_model.tar.gz",
     "keys"      : ['TransactionAmt','addr1','addr2'],
-    "inputs"    : [{"name": k, "type": "number", "min": 0.0, "max": 10000.0, "default": 50.0, "step": 1.0} for k in ['TransactionAmt','addr1','addr2']] # FIXED: Realistic bounds
+    "inputs"    : [{"name": k, "type": "number", "min": 0.0, "max": 10000.0, "default": 50.0, "step": 1.0} for k in ['TransactionAmt','addr1','addr2']]
 }
 
 def load_pipeline(_session, bucket, key):
@@ -77,21 +78,16 @@ def load_pipeline(_session, bucket, key):
         Key=f"{key}/{os.path.basename(filename)}"
     )
     
-    # Extract the .pkl file from the .tar.gz
     with tarfile.open(filename, "r:gz") as tar:
         tar.extractall(path=".")
         joblib_file = [f for f in tar.getnames() if f.endswith('.pkl')][0]
     
-    # Load the full pipeline
     return joblib.load(f"{joblib_file}")
 
 def load_shap_explainer(_session, bucket, key, local_path):
     s3_client = _session.client('s3')
-
-    # Only download if it doesn't exist locally to save time
     if not os.path.exists(local_path):
         s3_client.download_file(Filename=local_path, Bucket=bucket, Key=key)
-        
     with open(local_path, "rb") as f:
         return load(f)
 
@@ -101,12 +97,11 @@ def call_model_api(input_dict):
         endpoint_name=MODEL_INFO["endpoint"],
         sagemaker_session=sm_session,
         serializer=JSONSerializer(), 
-        deserializer=JSONDeserializer() # FIXED: Now matches inference output
+        deserializer=JSONDeserializer() 
     )
 
     try:
         raw_pred = predictor.predict(input_dict)
-        # Handle list wrapping from JSON response safely
         if isinstance(raw_pred, list):
             pred_val = raw_pred[-1]
         else:
@@ -117,30 +112,46 @@ def call_model_api(input_dict):
     except Exception as e:
         return f"Error: {str(e)}", 500
 
-# Local Explainability
+# --- 3. UPDATED EXPLAINABILITY (FIXED FEATURE NAMES) ---
 def display_explanation(input_dict, session, aws_bucket):
     explainer_name = MODEL_INFO["explainer"]
     explainer = load_shap_explainer(session, aws_bucket, posixpath.join('explainer', explainer_name), os.path.join(tempfile.gettempdir(), explainer_name))
     
-    # --- THIS IS THE LINE THAT NEEDED FIXING ---
     best_pipeline = load_pipeline(session, aws_bucket, 'fraud-detection-deployment-1')
     
-    preprocessing_pipeline = Pipeline(steps=best_pipeline.steps[:-3])
+    # Slice the pipeline to get all transformers except the final classifier
+    preprocessing_pipeline = Pipeline(steps=best_pipeline.steps[:-1])
     
-    # FIXED: Wrap flat dictionary in a list so pandas doesn't throw a scalar error
     input_df = pd.DataFrame([input_dict]) 
-    
     input_df_transformed = preprocessing_pipeline.transform(input_df)
-    feature_names = best_pipeline[:-2].get_feature_names_out()
+    
+    # MANUAL FEATURE NAMING: This fixes the 'get_feature_names_out' error
+    # since PCA and RFE scramble the original column names.
+    feature_names = [f"Component_{i+1}" for i in range(input_df_transformed.shape[1])]
     input_df_transformed = pd.DataFrame(input_df_transformed, columns=feature_names)
+    
+    # Generate SHAP values
     shap_values = explainer(input_df_transformed)
     
     st.subheader("🔍 Decision Transparency (SHAP)")
     fig, ax = plt.subplots(figsize=(10, 4))
-    shap.plots.waterfall(shap_values[0, :, 1])  # class 1 = fraud
+    
+    # Plot waterfall for Class 1 (Fraud)
+    if len(shap_values.shape) > 2:
+        shap.plots.waterfall(shap_values[0, :, 1])
+    else:
+        shap.plots.waterfall(shap_values[0])
+        
     st.pyplot(fig)
-    top_feature = pd.Series(shap_values[0, :, 1].values, index=shap_values[0, :, 1].feature_names).abs().idxmax()
-    st.info(f"**Business Insight:** The most influential factor in this decision was **{top_feature}**.")
+    
+    # Business Insight Extraction
+    try:
+        vals = shap_values.values[0] if len(shap_values.shape) <= 2 else shap_values.values[0, :, 1]
+        top_feature_idx = np.abs(vals).argmax()
+        top_feature = feature_names[top_feature_idx]
+        st.info(f"**Business Insight:** The most influential factor in this decision was **{top_feature}**.")
+    except:
+        pass
 
 # Streamlit UI
 st.set_page_config(page_title="ML Deployment", layout="wide")
@@ -160,7 +171,7 @@ with st.form("pred_form"):
     
     submitted = st.form_submit_button("Run Prediction")
 
-# FIXED: Extract a flat dictionary from the first row
+# Prepare full feature set from blueprint
 original = dataset.iloc[0:1].to_dict(orient='records')[0] 
 original.update(user_inputs)
 
